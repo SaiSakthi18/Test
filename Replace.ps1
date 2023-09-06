@@ -1,4 +1,4 @@
-# Set the input and output file paths
+# Set the input file path (same as the output file)
 $inputFile = "your_input_file.txt"
 $outputFile = "cleaned_output_file.txt"
 $logFile = "non_ascii_removal_log.txt"
@@ -44,5 +44,8 @@ Get-Content $inputFile | ForEach-Object {
 # Write the log to the log file
 $logContent | Out-File -Encoding utf8 $logFile
 
-Write-Host "Non-ASCII characters have been removed and cleaned content has been saved to $outputFile"
+# Replace the input file with the cleaned output file
+Move-Item -Path $outputFile -Destination $inputFile -Force
+
+Write-Host "Non-ASCII characters have been removed, and the input file has been updated."
 Write-Host "Log of removed non-ASCII characters has been saved to $logFile"
