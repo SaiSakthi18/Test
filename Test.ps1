@@ -7,12 +7,8 @@ if (Test-Path $outputFile) {
     Remove-Item $outputFile
 }
 
-# Initialize a line counter
-$lineNumber = 0
-
 # Read the input file line by line
 Get-Content $inputFile | ForEach-Object {
-    $lineNumber++
     $line = $_
     $nonAsciiChars = ""
 
@@ -22,7 +18,7 @@ Get-Content $inputFile | ForEach-Object {
 
         # Check if the character is non-ASCII
         if ([int]$char -lt 32 -or [int]$char -gt 126) {
-            $nonAsciiChars += "Line $lineNumber, Position $i: $char`r`n"
+            $nonAsciiChars += "$char"
         }
     }
 
@@ -32,4 +28,4 @@ Get-Content $inputFile | ForEach-Object {
     }
 }
 
-Write-Host "Non-ASCII characters and their positions have been saved to $outputFile"
+Write-Host "Non-ASCII characters have been saved to $outputFile"
