@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/ksh
 
 # Configuration
 CSV_FILE="/path/to/your/certificates.csv"
@@ -8,40 +8,45 @@ TODAY=$(date +%Y-%m-%d)
 THRESHOLD_DATE=$(date -d "+30 days" +%Y-%m-%d)
 TEMP_FILE="/tmp/expiring_items.txt"
 
-# Initialize
+# Initialize log
 echo "[$(date)] Running certificate expiry check" > "$LOG_FILE"
 
-# Check if CSV file exists
+# Check if CSV exists
 if [ ! -f "$CSV_FILE" ]; then
   echo "ERROR: CSV file not found at $CSV_FILE" >> "$LOG_FILE"
   echo "Certificate check failed. CSV file missing." | mailx -s "Cert Expiry Script Error" "$EMAIL_TO"
   exit 1
 fi
 
-# Prepare temp file
+# Clear temporary file
 > "$TEMP_FILE"
 
 # Read and process CSV
 {
-  read # skip header
-  while IFS=, read -r name expiry; do
+  read  # Skip header
+  while IFS=, read name expiry; do
     name=$(echo "$name" | xargs)
     expiry=$(echo "$expiry" | xargs)
 
-    # Validate expiry date
-    if ! date -d "$expiry" &>/dev/null; then
+    # Check if expiry is a valid date
+    if ! date -d "$expiry" > /dev/null 2>&1; then
       echo "WARNING: Invalid date for '$name': $expiry" >> "$LOG_FILE"
       continue
     fi
 
-    if [[ "$expiry" > "$TODAY" && "$expiry" <= "$THRESHOLD_DATE" ]]; then
+    # Convert dates to epoch seconds for comparison
+    expiry_epoch=$(date -d "$expiry" +%s)
+    today_epoch=$(date -d "$TODAY" +%s)
+    threshold_epoch=$(date -d "$THRESHOLD_DATE" +%s)
+
+    if [ "$expiry_epoch" -le "$threshold_epoch" ] && [ "$expiry_epoch" -gt "$today_epoch" ]; then
       echo "$name is expiring on $expiry" >> "$TEMP_FILE"
       echo "ALERT: $name is expiring on $expiry" >> "$LOG_FILE"
     fi
   done
 } < "$CSV_FILE"
 
-# Send email if any expiring items found
+# Send mail if expiring items exist
 if [ -s "$TEMP_FILE" ]; then
   mailx -s "Certificates Expiring in Next 30 Days" "$EMAIL_TO" < "$TEMP_FILE"
 fi
