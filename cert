@@ -1,6 +1,6 @@
 #!/bin/ksh
 
-# Configurable paths
+# Configuration
 CSV_FILE="/path/to/your/certificates.csv"
 LOG_FILE="/tmp/cert_expiry_check.log"
 EMAIL_TO="your_email@example.com"
@@ -11,11 +11,10 @@ HTML_BODY="/tmp/final_mail_body.html"
 TODAY=$(date +%Y-%m-%d)
 THRESHOLD_DATE=$(date -d "+30 days" +%Y-%m-%d)
 
-# Init logs
+# Initialize log
 echo "[$(date)] Running certificate expiry check" > "$LOG_FILE"
-> "$HTML_BODY"
 
-# Check required files
+# Validate files
 if [ ! -f "$CSV_FILE" ]; then
   echo "ERROR: CSV file not found at $CSV_FILE" >> "$LOG_FILE"
   echo "CSV file missing: $CSV_FILE" | mailx -s "Cert Expiry Script Error" "$EMAIL_TO"
@@ -23,16 +22,19 @@ if [ ! -f "$CSV_FILE" ]; then
 fi
 
 if [ ! -f "$HTML_HEADER" ] || [ ! -f "$HTML_FOOTER" ]; then
-  echo "ERROR: HTML templates not found." >> "$LOG_FILE"
-  echo "Missing HTML header/footer for email." | mailx -s "Cert Expiry Script Error" "$EMAIL_TO"
+  echo "ERROR: Missing HTML header/footer" >> "$LOG_FILE"
+  echo "Email HTML templates are missing." | mailx -s "Cert Expiry Script Error" "$EMAIL_TO"
   exit 1
 fi
 
-# Build HTML body
-cat "$HTML_HEADER" > "$HTML_BODY"
+# Start composing HTML body
+cp "$HTML_HEADER" "$HTML_BODY"
 
+CERTS_FOUND=0
+
+# Read and process CSV
 {
-  read  # skip header
+  read  # Skip header
   while IFS=, read name expiry; do
     name=$(echo "$name" | xargs)
     expiry=$(echo "$expiry" | xargs)
@@ -48,16 +50,19 @@ cat "$HTML_HEADER" > "$HTML_BODY"
 
     if [ "$expiry_epoch" -lt "$today_epoch" ]; then
       echo "<li><b>$name</b> has <span style='color:red;'>already expired</span> on <i>$expiry</i></li>" >> "$HTML_BODY"
+      CERTS_FOUND=1
     elif [ "$expiry_epoch" -le "$threshold_epoch" ]; then
       echo "<li><b>$name</b> is <span style='color:orange;'>expiring soon</span> on <i>$expiry</i></li>" >> "$HTML_BODY"
+      CERTS_FOUND=1
     fi
   done
 } < "$CSV_FILE"
 
+# Finish HTML content
 cat "$HTML_FOOTER" >> "$HTML_BODY"
 
-# Only send mail if body has any list item
-if grep -q "<li>" "$HTML_BODY"; then
+# Send mail if needed
+if [ "$CERTS_FOUND" -eq 1 ]; then
   mailx -a "Content-Type: text/html" -s "Certificate Expiry Report - $TODAY" "$EMAIL_TO" < "$HTML_BODY"
 fi
 
