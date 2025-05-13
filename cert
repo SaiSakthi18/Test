@@ -1,64 +1,51 @@
-@echo off
-setlocal enabledelayedexpansion
+#!/bin/bash
 
-:: Configuration
-set "CERT_FILE=C:\path\to\certificates.csv"
-set "SMTP_SERVER=smtp.example.com"
-set "FROM_EMAIL=alerts@example.com"
-set "TO_EMAIL=admin@example.com"
-set "EMAIL_CREDENTIALS=your-email-password"
+# Configuration
+CSV_FILE="/path/to/your/certificates.csv"
+LOG_FILE="/tmp/cert_expiry_check.log"
+EMAIL_TO="your_email@example.com"
+TODAY=$(date +%Y-%m-%d)
+THRESHOLD_DATE=$(date -d "+30 days" +%Y-%m-%d)
+TEMP_FILE="/tmp/expiring_items.txt"
 
-:: Get current date in YYYY-MM-DD format
-for /f "tokens=2 delims==" %%I in ('"wmic os get localdatetime /value"') do set "TODAY=%%I"
-set "TODAY=%TODAY:~0,4%-%TODAY:~4,2%-%TODAY:~6,2%"
+# Initialize
+echo "[$(date)] Running certificate expiry check" > "$LOG_FILE"
 
-:: Validate if the file exists
-if not exist "%CERT_FILE%" (
-    echo ERROR: Certificate file not found: %CERT_FILE%
-    exit /b 1
-)
+# Check if CSV file exists
+if [ ! -f "$CSV_FILE" ]; then
+  echo "ERROR: CSV file not found at $CSV_FILE" >> "$LOG_FILE"
+  echo "Certificate check failed. CSV file missing." | mailx -s "Cert Expiry Script Error" "$EMAIL_TO"
+  exit 1
+fi
 
-:: Read CSV and process each line
-(for /f "usebackq tokens=1,2 delims=," %%A in ("%CERT_FILE%") do (
-    set "CERT_NAME=%%A"
-    set "EXPIRY_DATE=%%B"
+# Prepare temp file
+> "$TEMP_FILE"
 
-    :: Skip header line
-    if /i "!CERT_NAME!"=="CertificateName" (
-        echo Skipping header...
-        goto :continue
-    )
+# Read and process CSV
+{
+  read # skip header
+  while IFS=, read -r name expiry; do
+    name=$(echo "$name" | xargs)
+    expiry=$(echo "$expiry" | xargs)
 
-    :: Calculate days until expiry
-    for /f %%I in ('powershell -Command "&{(New-TimeSpan -Start (Get-Date) -End (Get-Date !EXPIRY_DATE!)).Days}"') do set "DAYS_LEFT=%%I"
+    # Validate expiry date
+    if ! date -d "$expiry" &>/dev/null; then
+      echo "WARNING: Invalid date for '$name': $expiry" >> "$LOG_FILE"
+      continue
+    fi
 
-    if !DAYS_LEFT! LSS 0 goto :continue
+    if [[ "$expiry" > "$TODAY" && "$expiry" <= "$THRESHOLD_DATE" ]]; then
+      echo "$name is expiring on $expiry" >> "$TEMP_FILE"
+      echo "ALERT: $name is expiring on $expiry" >> "$LOG_FILE"
+    fi
+  done
+} < "$CSV_FILE"
 
-    :: Determine expiry category
-    set "EXPIRY_NOTICE="
-    if !DAYS_LEFT! EQU 1 set "EXPIRY_NOTICE=1 Day"
-    if !DAYS_LEFT! LEQ 7 set "EXPIRY_NOTICE=1 Week"
-    if !DAYS_LEFT! LEQ 30 set "EXPIRY_NOTICE=1 Month"
-    if !DAYS_LEFT! LEQ 90 set "EXPIRY_NOTICE=3 Months"
+# Send email if any expiring items found
+if [ -s "$TEMP_FILE" ]; then
+  mailx -s "Certificates Expiring in Next 30 Days" "$EMAIL_TO" < "$TEMP_FILE"
+fi
 
-    :: Send Email Alert if within expiry range
-    if defined EXPIRY_NOTICE (
-        echo Sending alert for !CERT_NAME! expiring in !EXPIRY_NOTICE!...
-
-        powershell -Command "&{
-            $smtpServer='%SMTP_SERVER%';
-            $from='%FROM_EMAIL%';
-            $to='%TO_EMAIL%';
-            $subject='Certificate Expiry Warning: !CERT_NAME!';
-            $body='The certificate "!CERT_NAME!" will expire in !EXPIRY_NOTICE! (!EXPIRY_DATE!).';
-            $securePassword=ConvertTo-SecureString '%EMAIL_CREDENTIALS%' -AsPlainText -Force;
-            $credential=New-Object System.Management.Automation.PSCredential ($from, $securePassword);
-            Send-MailMessage -SmtpServer $smtpServer -Credential $credential -From $from -To $to -Subject $subject -Body $body -UseSsl
-        }"
-    )
-
-    :continue
-)) 2>error.log
-
-echo Script completed.
-exit /b 0
+# Cleanup
+rm -f "$TEMP_FILE"
+echo "[$(date)] Check complete" >> "$LOG_FILE"
