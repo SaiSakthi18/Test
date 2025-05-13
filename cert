@@ -1,56 +1,66 @@
 #!/bin/ksh
 
-# Configuration
+# Configurable paths
 CSV_FILE="/path/to/your/certificates.csv"
 LOG_FILE="/tmp/cert_expiry_check.log"
 EMAIL_TO="your_email@example.com"
+HTML_HEADER="/path/to/mail_body_header.html"
+HTML_FOOTER="/path/to/mail_body_footer.html"
+HTML_BODY="/tmp/final_mail_body.html"
+
 TODAY=$(date +%Y-%m-%d)
 THRESHOLD_DATE=$(date -d "+30 days" +%Y-%m-%d)
-TEMP_FILE="/tmp/expiring_items.txt"
 
-# Initialize log
+# Init logs
 echo "[$(date)] Running certificate expiry check" > "$LOG_FILE"
+> "$HTML_BODY"
 
-# Check if CSV exists
+# Check required files
 if [ ! -f "$CSV_FILE" ]; then
   echo "ERROR: CSV file not found at $CSV_FILE" >> "$LOG_FILE"
-  echo "Certificate check failed. CSV file missing." | mailx -s "Cert Expiry Script Error" "$EMAIL_TO"
+  echo "CSV file missing: $CSV_FILE" | mailx -s "Cert Expiry Script Error" "$EMAIL_TO"
   exit 1
 fi
 
-# Clear temporary file
-> "$TEMP_FILE"
+if [ ! -f "$HTML_HEADER" ] || [ ! -f "$HTML_FOOTER" ]; then
+  echo "ERROR: HTML templates not found." >> "$LOG_FILE"
+  echo "Missing HTML header/footer for email." | mailx -s "Cert Expiry Script Error" "$EMAIL_TO"
+  exit 1
+fi
 
-# Read and process CSV
+# Build HTML body
+cat "$HTML_HEADER" > "$HTML_BODY"
+
 {
-  read  # Skip header
+  read  # skip header
   while IFS=, read name expiry; do
     name=$(echo "$name" | xargs)
     expiry=$(echo "$expiry" | xargs)
 
-    # Check if expiry is a valid date
-    if ! date -d "$expiry" > /dev/null 2>&1; then
+    if ! date -d "$expiry" >/dev/null 2>&1; then
       echo "WARNING: Invalid date for '$name': $expiry" >> "$LOG_FILE"
       continue
     fi
 
-    # Convert dates to epoch seconds for comparison
     expiry_epoch=$(date -d "$expiry" +%s)
     today_epoch=$(date -d "$TODAY" +%s)
     threshold_epoch=$(date -d "$THRESHOLD_DATE" +%s)
 
-    if [ "$expiry_epoch" -le "$threshold_epoch" ] && [ "$expiry_epoch" -gt "$today_epoch" ]; then
-      echo "$name is expiring on $expiry" >> "$TEMP_FILE"
-      echo "ALERT: $name is expiring on $expiry" >> "$LOG_FILE"
+    if [ "$expiry_epoch" -lt "$today_epoch" ]; then
+      echo "<li><b>$name</b> has <span style='color:red;'>already expired</span> on <i>$expiry</i></li>" >> "$HTML_BODY"
+    elif [ "$expiry_epoch" -le "$threshold_epoch" ]; then
+      echo "<li><b>$name</b> is <span style='color:orange;'>expiring soon</span> on <i>$expiry</i></li>" >> "$HTML_BODY"
     fi
   done
 } < "$CSV_FILE"
 
-# Send mail if expiring items exist
-if [ -s "$TEMP_FILE" ]; then
-  mailx -s "Certificates Expiring in Next 30 Days" "$EMAIL_TO" < "$TEMP_FILE"
+cat "$HTML_FOOTER" >> "$HTML_BODY"
+
+# Only send mail if body has any list item
+if grep -q "<li>" "$HTML_BODY"; then
+  mailx -a "Content-Type: text/html" -s "Certificate Expiry Report - $TODAY" "$EMAIL_TO" < "$HTML_BODY"
 fi
 
 # Cleanup
-rm -f "$TEMP_FILE"
+rm -f "$HTML_BODY"
 echo "[$(date)] Check complete" >> "$LOG_FILE"
