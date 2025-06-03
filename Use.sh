@@ -15,12 +15,31 @@ if exist "%OUTPUT_FILE%" del "%OUTPUT_FILE%"
 :: === Initialize counter ===
 set "USER_COUNT=0"
 
-:: === Extract and flatten usernames ===
-for /f "tokens=* delims=" %%A in ('findstr /r "^[ ]*[A-Za-z0-9]" "%TEMP_FILE%"') do (
+:: === Process only the lines with actual usernames ===
+set "IN_USERS=0"
+
+for /f "usebackq tokens=* delims=" %%A in ("%TEMP_FILE%") do (
     set "LINE=%%A"
-    for %%U in (!LINE!) do (
-        echo %%U >> "%OUTPUT_FILE%"
-        set /a USER_COUNT+=1
+    
+    :: Start capturing after the blank line following the header
+    if "!LINE!"=="" (
+        if !IN_USERS! EQU 0 (
+            set "IN_USERS=1"
+        ) else (
+            :: If another blank line appears after users start, stop
+            set "IN_USERS=2"
+        )
+    )
+
+    if !IN_USERS! EQU 1 (
+        :: Exclude blank lines and footer
+        echo !LINE! | findstr /r /v "^[ ]*$" | findstr /v "command completed" >nul
+        if !errorlevel! == 0 (
+            for %%U in (!LINE!) do (
+                echo %%U >> "%OUTPUT_FILE%"
+                set /a USER_COUNT+=1
+            )
+        )
     )
 )
 
@@ -30,6 +49,6 @@ echo Total users: %USER_COUNT% >> "%OUTPUT_FILE%"
 
 :: === Cleanup ===
 del "%TEMP_FILE%"
-echo Saved user list and total count to: %OUTPUT_FILE%
+echo Saved cleaned user list and count to: %OUTPUT_FILE%
 endlocal
 pause
